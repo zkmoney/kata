@@ -1,0 +1,367 @@
+Interfaces
+API Practice Code Kata
+8 Aug 2017
+
+Zachary Kilgore
+API Practice Leader, Raise Marketplace
+zachary.kilgore@raise.com
+@zkilgore
+
+* Basics
+
+* What is an interface?
+
+An interface type is defined as a set of method signatures.
+
+A value of interface type can hold any value that implements those methods.
+
+(from the [[https://tour.golang.org/methods/9][Tour of Go]])
+
+* So what?
+- Interfaces provide a way to declare types that define _only_behavior_
+- Ask not what a type *can*have*, but what it *can*do*
+
+This is how we create polymorphic behavior in go
+
+* Example
+
+    type Animal interface {
+        Speak() string
+    }
+
+    type Dog struct {}
+
+    func (Dog) Speak() string { return "woof!" }
+
+    type Cat struct {}
+
+    func (Cat) Speak() string { return "meow..." }
+
+    func runAwayFromScreamingAnimal(a Animal) {
+        a.Speak()
+        a.Speak()
+        a.Speak()
+        // RUN!
+    }
+
+    d := Dog{}
+    runAwayFromScreamingAnimal(d) // Works!
+    c := Cat{}
+    runAwayFromScreamingAnimal(c) // Works!
+
+
+
+* Example (cont.)
+
+*BOOOOOOOOOO!*
+
+That example is dumb and I hate it. Why would we ever write that stupid Animal class...
+
+* Anyway...
+
+* Better example
+
+    package http
+
+    type Handler interface {
+        ServeHTTP(ResponseWriter, *Request)
+    }
+
+    type HandlerFunc func(ResponseWriter, *Request)
+
+    func (fn HandlerFunc) ServeHTTP(w ResponseWriter, r *Request) {
+        fn(w, r)
+    }
+
+Interesting...
+
+_Side_note:_ `func` is a first class citizen in go!
+
+* Better example
+
+    type alwaysHealthyHandler struct {}
+
+    func (healthHandler) ServeHTTP(w ResponseWriter, r *Request) {
+        w.WriteHeader(200)
+    }
+
+    type maybeHealthyHandler struct {
+        healthy bool
+    }
+
+    func (h maybeHealthyHandler) ServeHTTP(w ResponseWriter, r *Request) {
+        if h.healthy {
+            w.WriteHeader(200)
+        } else {
+            w.WriteHeader(500)
+        }
+    }
+
+    http.Handle("/health", healthHandler{})
+    http.Handle("/not-healthy", maybeHealthyHandler{healthy: false})
+
+* Better example (cont.)
+
+    type Middleware interface {
+    	WrapHandler(http.Handler) http.Handler
+    }
+
+Any type can be `Middleware` as long as it implements a method with the signature `WrapHandler(http.Handler)`http.Handler`
+
+    type DDMetricsBackend struct {
+        creds string
+        metrics []*MetricDef
+        prefix string
+        ...
+    }
+
+    func (mb DDMetricsBackend) WrapHandler(h Handler) Handler {
+        return HandlerFunc(func(w ResponseWriter, r *Request) {
+            for _, m := range mb.metrics {
+                m.applyMetricToRequest(r)
+            }
+            h.ServeHTTP(w, r )
+        })
+    }
+
+
+* Better example (cont.)
+
+Initialize and assemble a bunch of middleware and a handler, call it a type, add a dash of `ServeHTTP` and BAM!
+
+    type HandlerWithMiddleware struct {
+        h Handler
+        ms []Middleware
+    }
+
+    func (h HandlerWithMiddleware) ServeHTTP(w ResponseWriter, r *Request) {
+        for _, mw := range ms {
+            h = mw.WrapHandler(h)
+        }
+        return h.ServeHTTP(w, r)
+    }
+
+    func NewHanlderWithMiddleware(h Handler, ms ...Middleware) {
+        return HandlerWithMiddleware{h: h, ms, ms}
+    }
+
+* Better example (cont.)
+    var userHandler http.HandlerFunc = func(w ResponseWriter, r *http.Request) { ...do the stuff }
+    var wrappedUseHandler = NewHandlerWithMiddleware(
+        userHandler,
+        loggingMiddleware, tracingMiddleware, metricsMiddleware, requestScopedMiddleware,
+    }
+
+    //  userHandler = HandlerWithMiddleware{
+    //      h: func(w ResponseWriter, r *http.Request) { ...do the stuff }
+    //      ms: []{loggingMiddleware, tracingMiddleware, metricsMiddleware, requestScopedMiddleware},
+    //  }
+    //  wrappedUserHandler.ServeHTTP ->
+    //      requestScopedMiddleware ->
+    //      metricsMiddleware ->
+    //      tracingMiddleware ->
+    //      loggingMiddleware ->
+    //      userHandler
+
+
+* Facets and features
+
+- Implemented implicitly
+- Embeddable and composable
+- All types implement empty `interface{}`
+
+* Implemented implicitly
+
+A type implements an interface by implementing its methods. There is no explicit declaration of intent, no "implements" keyword.
+
+Implicit interfaces decouple the definition of an interface from its implementation, which could then appear in any package without prearrangement.
+
+* Implemented implicitly
+
+    type joker interface {
+        TellJoke(string)
+    }
+    type laugher interface {
+        Laugh()
+    }
+
+    type funnyGuy struct {}
+
+    // funnyGuy is a joker and a laugher
+    func (funnyGuy) TellJoke(string) {...}
+    func (funnyGuy) Laugh() {...}
+
+    func doStandup(j joker) {...}
+    func watchStandup(l laugher) {...}
+
+    func main() {
+        guy := funnyGuy{}
+        doStandup(guy)      // cool
+        watchStandup(guy)   // totally cool
+    }
+
+
+* Embedding
+
+Embedding and composition work the same as other `struct` fields
+
+    type Pusher interface{
+        Push()
+    }
+
+    type someStruct struct {
+        name string
+        Pusher
+    }
+
+    // someStruct embeds a Pusher, so the compiler knows it can call the .Push method
+    ...
+        var ss someStruct
+        ss.Push() // OK!
+    ...
+
+* Composition
+
+    type ModelCreator interface {
+        CreateModel(m CreateParams) Model
+    }
+
+    type ModelReader interface {
+        ReadModel(id string) Model
+    }
+
+    type ModelUpdater interface {
+        UpdateModel(m UpdateParams) Model
+    }
+
+    type ModelDeleter interface {
+        DeleteModel(id string)
+    }
+
+    type ModelCRUDService interface {
+        ModelCreator
+        ModelReader
+        ModelUpdater
+        ModelDeleter
+    }
+
+
+* The empty interface
+
+`interface{}` is the "empty interface". *Every* type implements the empty interface
+
+- Allows arbitrary argument types
+- Use type assertion or type switch to coerce concrete value (if needed)
+
+    if ok, impl := someInterface.(concreteImplementation); ok {
+        val := impl.someFieldThatICanNowAccess
+    }
+
+    switch v := v.(type) {
+        case string:
+            // operate on a string value
+        case int:
+            // operate on an int value
+        case Joker:
+            v.TellJoke() // ha ha ha
+    }
+
+
+* Errors
+
+`error` is nothing more than an interface defined by the language spec.
+
+It has a very simple method set:
+
+    type error interface {
+        Error() string
+    }
+
+
+* In Practice
+
+* Common use cases
+
+- Single method interfaces for ubiquity (`io.Reader`, `Stringer`, `error`)
+- Have a well defined API that supports multiple implementations (`sql.Driver`, `sort.Interface`)
+- Dependency injection, mocking/stubbing/faking + testing
+
+* Dependency injection
+
+- Define "acting" members of a `struct` to be interface values
+- Initialize dependencies at the time of creation
+
+    type CardDB interface {
+        Read(id string) Card
+    }
+
+    type inMemCardDB struct { cards map[string]Card }
+    func (inMemCardDB) Read(id string) Card { return cards[id] }
+
+    type mongoCardDB struct {}
+    func (cardMongoDB) Read(id string) Card {...}
+
+    type CardService struct {
+        DB CardDB
+    }
+
+    func main() {
+        svc := CardService{ DB: NewMongoCardDB(initParams) }
+        svc.DB.Read("1")
+    }
+
+* Testable
+
+How to test `CardService.DoSomeFunkyLogic` without a real db???
+
+    func (svc CardService) DoSomeFunkyLogic(id string) (Card, error) {
+        c := svc.DB.Read(id)
+
+        // Like woah there is some serious logic that
+        // needs to be tested here...
+    }
+
+* Testable (cont.)
+
+Good thing we made `DB` an interface:
+
+    type fakeCardDB struct {
+        ReadFn      func(id string) Card
+        ReadInvoked bool
+    }
+    func (db fakeCardDB) Read(id string) Card { // Implements the CardDB interface!
+        db.ReadInvoked = true
+        return db.ReadFn(id) // proxy to (hopefully) injected ReadFn
+    }
+
+    func TestCardService_DoSomeFunkyLogic(t *testing.T) {
+        fakeDB := fakeCardDB{
+            ReadFn: func(id string) Card { return someValidCard }
+        }
+        svc := CardService{DB: fakeDB}
+        card, err := svc.DoSomeFunkyLogic("id")
+        if !fakeDB.ReadInvoked { // Make sure Read was called
+            t.Error("Read db method not invoked")
+        }
+        // Assert! ...etc etc etc
+    }
+
+
+* Tips
+
+- Keep interfaces simple, with as few methods as possible
+- Use interface composition to define a larger API surface area
+- Have your funcs and methods accept interface types
+- Write custom "thin" interface types to define dependencies based on needed behavior (when appropriate)
+- Don't interface pollute (do you really need to export that interface?)
+
+* Further reading
+
+.link http://jordanorelli.com/post/32665860244/how-to-use-interfaces-in-go
+.link https://www.goinggo.net/2017/07/interface-semantics.html
+.link https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/interfaces/README.md
+.link https://medium.com/golangspec/interfaces-in-go-part-i-4ae53a97479c
+.link https://medium.com/@rakyll/interface-pollution-in-go-7d58bccec275
+
+
+* On to the refactor!
