@@ -1,0 +1,266 @@
+Errors in Go
+API Practice Code Kata
+
+Zachary Kilgore
+
+* Basics
+
+* error is a first class interface
+
+Any type that implements the method `Error()`string` is an `error`. This is how the stdlib does it:
+
+    package errors
+
+    // New returns an error that formats as the given text.
+    func New(text string) error {
+        return &errorString{text}
+    }
+
+    // errorString is a trivial implementation of error.
+    type errorString struct {
+        s string
+    }
+
+    func (e *errorString) Error() string {
+        return e.s
+    }
+
+That's it! The `errors` package is just a `struct` with a `string` member.
+
+* Basics (cont.)
+
+Other stdlib packages define their own error constants, but also their own `error` types, like the `os` package:
+
+    package os
+
+    // Portable analogs of some common system call errors.
+    var (
+        ErrInvalid    = errors.New("invalid argument") // methods on File will return this error when the receiver is nil
+        ErrPermission = errors.New("permission denied")
+        ErrExist      = errors.New("file already exists")
+        ErrNotExist   = errors.New("file does not exist")
+        ErrClosed     = errors.New("file already closed")
+    )
+
+    // PathError records an error and the operation and file path that caused it.
+    type PathError struct {
+        Op   string
+        Path string
+        Err  error
+    }
+
+    func (e *PathError) Error() string { return e.Op + " " + e.Path + ": " + e.Err.Error() }
+
+* Basics (cont.)
+
+And a `PathError`
+
+
+
+    // SyscallError records an error from a specific system call.
+    type SyscallError struct {
+        Syscall string
+        Err     error
+    }
+
+    func (e *SyscallError) Error() string { return e.Syscall + ": " + e.Err.Error() }
+
+
+These errors are created in the package, which is how the various fields are able to be populated. The `error` interface merely displays a string representation of the error, with no way to modify an error.
+
+* Errors should be considered immutable
+
+Though it's possible to modify the contents of an error through reflection, *DON'T!* Additional metadata can be propagated up the stack to the caller by "annotating" the error (more on that in a bit).
+
+* Anything, and I mean anything, can be an error
+
+Even data model structs or controller/handler structs can be errors
+
+    type CardModel struct {
+        // ...some fields
+    }
+
+    func (CardModel) Error() string { return "this CardModel broke something" }
+
+    type CardHandler struct {
+        cardClient
+        db DBClient
+    }
+
+    func (CardHandler) Error() string { return "This is WEIRD!!!" }
+
+though that is confusing and probably shouldn't be done unless there is a _really_ good reason.
+
+* In Practice
+
+* Handling errors
+
+Standard golang error handling code looks like this:
+
+    if err := DoSomething(); err != nil {
+        return err
+    }
+
+or
+
+    thing, err := CreateSomething()
+    if err != nil {
+        return err
+    }
+
+which a go developer will see _constantly_
+
+* Please handle them!
+
+If a `func` returns an `error`, *handle it!* Do not use an `_` to swallow the returned `error`. (You will see some examples where this is not followed, such as cases where you have nothing to "handle" the  error with (like a logger) and it is trivial in the sense that it has no effect on the operation of the program, but don't do it.)
+
+* Do's and Don'ts
+
+* Don't handle an error more than once
+
+`error`s should either be propagated to the caller, or handled and swallowed if it is appropriate.
+
+An anti pattern (that unfortunately is prevalent in parts of the `api` code base) is to log an error at every point the error is returned up the stack. Logging is a form of handling the error, and only needs to happen once!
+
+* Bad (and annoying to SumoLogic) example
+
+Blindly logging the error at every return and just passing the error up the stack with no annotations.
+
+[[https://play.golang.org/p/Jtm9_wXKDB][https://play.golang.org/p/Jtm9_wXKDB]]
+
+
+
+* Better
+
+Annotate the error string with additional context
+
+[[https://play.golang.org/p/BsYl3v_BYi][https://play.golang.org/p/BsYl3v_BYi]]
+
+
+* The Good Stuff
+
+* Annotating errors
+
+Using `fmt.Errorf` is ok, but we're just appending strings
+
+- Cumbersome to use
+- No way to add additional, structured metadata
+- Harder to inspect
+
+* pkg/errors
+
+The package `pkg/errors`, created by the golang legend Dave Cheney, changed the game when it came to go error handling. He introduced the concept of "wrapping" an error, which creates a new `error` that points to an existing error, the new error being annotated with additional meta data, such as the callers stack trace or a message.
+
+This is a must read
+
+[[https://dave.cheney.net/2016/04/27/dont-just-check-errors-handle-them-gracefully][Don’t just check errors, handle them gracefully]]
+
+
+
+* on Annotating errors
+
+I’d like to suggest a method to add context to errors, and to do that I’m going to introduce a simple package. The code is online at github.com/pkg/errors. The errors package has two main functions:
+
+    // Wrap annotates cause with a message.
+    func Wrap(cause error, message string) error
+
+The first function is Wrap, which takes an error, and a message and produces a new error.
+
+
+    // Cause unwraps an annotated error.
+    func Cause(err error) error
+
+The second function is Cause, which takes an error that has possibly been wrapped, and unwraps it to recover the original error.
+
+* on Annotating errors (cont.)
+
+Using these two functions, we can now annotate any error, and recover the underlying error if we need to inspect it. Consider this example of a function that reads the content of a file into memory.
+
+    func ReadFile(path string) ([]byte, error) {
+            f, err := os.Open(path)
+            if err != nil {
+                    return nil, errors.Wrap(err, "open failed")
+            }
+            defer f.Close()
+
+            buf, err := ioutil.ReadAll(f)
+            if err != nil {
+                    return nil, errors.Wrap(err, "read failed")
+            }
+            return buf, nil
+    }
+
+* on Annotating errors (cont.)
+
+We’ll use this function to write a function to read a config file, then call that from main.
+
+    func ReadConfig() ([]byte, error) {
+            home := os.Getenv("HOME")
+            config, err := ReadFile(filepath.Join(home, ".settings.xml"))
+            return config, errors.Wrap(err, "could not read config")
+    }
+
+
+    func main() {
+            _, err := ReadConfig()
+            if err != nil {
+                    fmt.Println(err)
+                    os.Exit(1)
+            }
+    }
+
+* on Annotating errors (cont.)
+
+If the ReadConfig code path fails, because we used errors.Wrap, we get a nicely annotated error in the K&D style.
+
+    could not read config: open failed: open /Users/dfc/.settings.xml: no such file or directory
+
+* on Annotating errors (cont.)
+
+Because `errors.Wrap` produces a stack of errors, we can inspect that stack for additional debugging information. This is the same example again, but this time we replace `fmt.Println` with `errors.Print`
+
+
+    func main() {
+            _, err := ReadConfig()
+            if err != nil {
+                    errors.Print(err)
+                    os.Exit(1)
+            }
+    }
+
+
+* on Annotating errors (cont.)
+
+We’ll get something like this:
+
+    readfile.go:27: could not read config
+    readfile.go:14: open failed
+    open /Users/dfc/.settings.xml: no such file or directory
+
+The first line comes from `ReadConfig`, the second comes from the `os.Open` part of `ReadFile`, and the remainder comes from the os package itself, which does not carry location information.
+
+* on Annotating errors (cont.)
+
+Now we’ve introduced the concept of wrapping errors to produce a stack, we need to talk about the reverse, unwrapping them. This is the domain of the errors.Cause function.
+
+    type temporary struct {}
+
+    func (temporary) Error() string {
+        return "this is a temp error"
+    }
+
+    // IsTemporary returns true if err is temporary.
+    func IsTemporary(err error) bool {
+            te, ok := errors.Cause(err).(temporary)
+            return ok && te.Temporary()
+    }
+
+In operation, whenever you need to check an error matches a specific value or type, you should first recover the original error using the `errors.Cause` function.
+
+* rlib/errors
+
+    type ServiceError struct {
+        error
+        code string
+        meta map[string]interface{}
+    }

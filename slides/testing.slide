@@ -1,0 +1,54 @@
+Testing in Go
+API Practice Code Kata
+
+Zachary Kilgore
+
+* Basics
+
+"Testing , by which we implicitly mean automated testing, is the practice of writing small programs that check that the code under test (the production code) behaves as expected for certain inputs, which are usually either carefully chosen to exercise certain features or randomized to ensure broad coverage."
+
+Go's approach to testing is very lightweight
+
+- `go`test` tool executes tests on...
+- `Test` prefixed functions that accept a `t *testing.T`, defined in...
+- `_test.go` files in the package
+
+Writing the tests is no different than writing the original program itself!
+
+* Basics (cont.)
+
+.play ../basic/basic.go
+
+* Basics (cont.)
+
+.code ../basic/basic_test.go
+
+* The go test command
+
+- `-v` - Verbose output
+- `-cover` - Coverage analysis
+- `-run`[regexp]` - Run only tests that match a regular expression
+- `-tags` - Include test files that have build tags (otherwise excluded)
+
+* testing package
+
+`testing.T` manages test state, accumulating and formatting logs, running sub tests. Most commonly used methods are
+
+- `T.Log()` - Log messages to T buffer that will be displayed if the test fails or `go`test`-v` is run
+- `T.Errorf()` - Log a message and fail the test
+- `T.Fatal()` - Log a message, fail a test and immediately stop execution
+- `T.Run(name, func(t *T))` - Run a sub test. Useful in table tests
+
+If `TestMain()` is defined, it will be called explicitly rather than `go`test` auto generating it's own `main()` func for the test program. This can be useful for setup and teardown, parsing command line flags, etc.
+
+https://golang.org/pkg/testing/#hdr-Main
+
+* Table Testing
+
+* Interfaces and testing
+
+* Using "Fakes"
+
+Fake implementations of an interface are injected as dependencies to control downstream inputs
+
+* HTTP Testing
